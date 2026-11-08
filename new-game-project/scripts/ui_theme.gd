@@ -1,0 +1,361 @@
+@tool
+extends RefCounted
+## Shared interface tokens and cached native control styles.
+## Palette colors. These are today's values; _static_init() replaces them with the
+## "Game" colors from the theme file, so they can be edited in the editor.
+static var BACKGROUND := Color("0b0b0d")
+static var PANEL := Color("1e1c20")
+static var RAISED := Color("2c292e")
+static var INSET := Color("111014")
+static var BRONZE := Color("c69c49")
+static var GOLD := Color("e0b963")
+static var CRIMSON := Color("8b1e24")
+static var ACTION := Color("b8252b")
+static var AMBER := Color("d99b26")
+static var TEXT := Color("eae4dc")
+static var MUTED := Color("8c867e")
+static var DISABLED := Color("77716c")
+static var RESPONSE := GOLD
+static var DANGER := Color("ed8985")
+static var AFFINITIES := {
+	"evac": Color("91ad59"), "douse": Color("66a9b4"),
+	"clearance": Color("da9148"), "brace": Color("b8bcc5"),
+	"earthquake": Color("c2aa57"), "fire": Color("d65349"),
+	"flood": Color("598dc3"), "typhoon": Color("a47bc1")
+}
+const BODY_SIZE := 18
+const SMALL_SIZE := 14
+const HEADING_SIZE := 30
+const THEME_PATH := "res://data/ui_theme.tres"
+static var shared_theme: Theme
+static var body_font: SystemFont
+static var heading_font: SystemFont
+static var icons: Dictionary = {}
+static var card_styles: Dictionary = {}
+
+static func _static_init() -> void:
+	var file: Theme = load(THEME_PATH) if ResourceLoader.exists(THEME_PATH) else null
+	BACKGROUND = _game_color(file, "background", BACKGROUND)
+	PANEL = _game_color(file, "panel", PANEL)
+	RAISED = _game_color(file, "raised", RAISED)
+	INSET = _game_color(file, "inset", INSET)
+	BRONZE = _game_color(file, "bronze", BRONZE)
+	GOLD = _game_color(file, "gold", GOLD)
+	CRIMSON = _game_color(file, "crimson", CRIMSON)
+	ACTION = _game_color(file, "action", ACTION)
+	AMBER = _game_color(file, "amber", AMBER)
+	TEXT = _game_color(file, "text", TEXT)
+	MUTED = _game_color(file, "muted", MUTED)
+	DISABLED = _game_color(file, "disabled", DISABLED)
+	# Read after GOLD, so a file without "response" still matches gold.
+	RESPONSE = _game_color(file, "response", GOLD)
+	DANGER = _game_color(file, "danger", DANGER)
+	for element in AFFINITIES:
+		AFFINITIES[element] = _game_color(file, "affinity_" + element, AFFINITIES[element])
+
+## A "Game" color from the theme file, or the fallback when the file or the color is missing.
+static func _game_color(file: Theme, color_name: String, fallback: Color) -> Color:
+	if file == null or not file.has_color(color_name, "Game"): return fallback
+	return file.get_color(color_name, "Game")
+
+## Code palette, saved as theme type "Game" so it can be edited in the theme file.
+static func palette() -> Dictionary:
+	return {
+		"background": BACKGROUND, "panel": PANEL, "raised": RAISED, "inset": INSET,
+		"bronze": BRONZE, "gold": GOLD, "crimson": CRIMSON, "action": ACTION,
+		"amber": AMBER, "text": TEXT, "muted": MUTED, "disabled": DISABLED,
+		"response": RESPONSE, "danger": DANGER
+	}
+
+static func font(_heading: bool = false) -> Font:
+	return preload("res://assets/fonts/CaveatBrush-Regular.ttf")
+
+static func card_font(heading: bool = false) -> SystemFont:
+	if body_font == null:
+		body_font = SystemFont.new()
+		# Same family as headings, regular weight.
+		body_font.font_names = PackedStringArray(["Bahnschrift Condensed", "Bahnschrift", "Arial Narrow", "Arial"])
+		heading_font = SystemFont.new()
+		heading_font.font_names = PackedStringArray(["Bahnschrift Condensed", "Bahnschrift", "Arial Narrow", "Arial"])
+		heading_font.font_weight = 700
+	return heading_font if heading else body_font
+
+static func affinity_color(element: String) -> Color:
+	return AFFINITIES.get(element, BRONZE)
+
+static func panel(fill: Color = PANEL, border: Color = BRONZE, inset: int = 16) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.border_color = border
+	box.set_border_width_all(1)
+	box.border_width_bottom = 2
+	box.set_corner_radius_all(8)
+	box.corner_detail = 1
+	box.set_content_margin_all(inset)
+	return box
+
+static func bar(color: Color) -> StyleBoxFlat:
+	var box := panel(color, BRONZE.darkened(0.5), 0)
+	box.set_corner_radius_all(3)
+	return box
+
+## Muted bronze fill stays inside the gold rim.
+static func tension_fill() -> StyleBoxFlat:
+	var box := bar(BRONZE.darkened(0.28))
+	box.set_corner_radius_all(0)
+	box.set_border_width_all(0)
+	box.set_expand_margin_all(-2)
+	return box
+
+## Tension track: dark, square, 2px gold rim.
+static func tension_track() -> StyleBoxFlat:
+	var box := panel(INSET, BRONZE.darkened(0.2), 0)
+	box.set_corner_radius_all(0)
+	box.set_border_width_all(2)
+	return box
+
+static func card_frame(disaster: bool) -> StyleBoxFlat:
+	var key := "disaster" if disaster else "response"
+	if not card_styles.has(key):
+		var style := panel(CRIMSON.darkened(0.72) if disaster else PANEL, BRONZE, 0)
+		style.set_border_width_all(4)
+		style.set_corner_radius_all(10)
+		card_styles[key] = style
+	return card_styles[key]
+
+static func badge_style(fill: Color) -> StyleBoxFlat:
+	var key := "badge" + fill.to_html()
+	if not card_styles.has(key):
+		var style := panel(fill, BRONZE, 0)
+		style.set_border_width_all(3)
+		style.set_corner_radius_all(9)
+		card_styles[key] = style
+	return card_styles[key]
+
+static func affinity_band(element: String) -> StyleBoxFlat:
+	var key := "affinity" + element
+	if not card_styles.has(key):
+		var accent := affinity_color(element)
+		var style := panel(accent.darkened(0.6), accent.lerp(GOLD, 0.3), 0)
+		style.set_corner_radius_all(0)
+		card_styles[key] = style
+	return card_styles[key]
+
+const SYMBOL_ALIASES := {
+	"brace": "armored", "extract": "move", "move_ally": "move", "seal": "sealed",
+	"sluggish": "resting", "rally": "strength", "on_play_draw": "draw"
+}
+
+## Imported white pixel masks keep arbitrary theme colors, including disabled states.
+static func icon(kind: String, color: Color = GOLD) -> Texture2D:
+	var symbol: String = SYMBOL_ALIASES.get(kind, kind)
+	var path := "res://assets/symbols/%s.svg" % symbol
+	if not ResourceLoader.exists(path): path = "res://assets/symbols/fallback.svg"
+	var key := path + color.to_html()
+	if icons.has(key): return icons[key]
+	var source := load(path) as Texture2D
+	if color == Color.WHITE:
+		icons[key] = source
+		return source
+	var image := source.get_image()
+	image.convert(Image.FORMAT_RGBA8)
+	for y in image.get_height():
+		for x in image.get_width():
+			var pixel := image.get_pixel(x, y)
+			image.set_pixel(x, y, pixel * color)
+	var texture := ImageTexture.create_from_image(image)
+	icons[key] = texture
+	return texture
+
+static func decorate(control: Control, hazard: bool = false) -> void:
+	if control.has_node("IndustrialTrim"): return
+	var trim = load("res://scripts/ui_plate.gd").new()
+	trim.name = "IndustrialTrim"
+	control.add_child(trim)
+	trim.setup(control, BRONZE, AMBER, hazard)
+
+static func outline(label: Control, size: int = 2) -> void:
+	label.add_theme_color_override("font_outline_color", BACKGROUND)
+	label.add_theme_constant_override("outline_size", size)
+
+## Loads the editable theme file when it exists; otherwise builds the same theme in code.
+static func get_theme() -> Theme:
+	if shared_theme != null: return shared_theme
+	shared_theme = load(THEME_PATH) if ResourceLoader.exists(THEME_PATH) else build_theme()
+	return shared_theme
+
+static func build_theme() -> Theme:
+	var theme := Theme.new()
+	theme.default_font = font()
+	theme.default_font_size = BODY_SIZE
+	for type in ["Button", "OptionButton", "MenuButton", "CheckBox", "CheckButton"]:
+		for state in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
+			var fill := BACKGROUND
+			var border := GOLD if state in ["hover", "pressed", "hover_pressed", "focus"] else BRONZE.darkened(0.35)
+			if state == "disabled": border = MUTED.darkened(0.55)
+			if state == "focus": fill = Color.TRANSPARENT
+			var box := panel(fill, border, 12)
+			box.content_margin_top = 8
+			box.content_margin_bottom = 8
+			theme.set_stylebox(state, type, box)
+		for state in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
+			theme.set_color(state, type, TEXT if state == "font_color" else GOLD)
+		theme.set_color("font_disabled_color", type, DISABLED)
+		theme.set_font("font", type, font(true))
+	for variant in ["PrimaryButton", "TerminalButton"]:
+		theme.set_type_variation(variant, "Button")
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			var fill := BACKGROUND
+			if state == "disabled": fill = PANEL
+			if state == "focus": fill = Color.TRANSPARENT
+			var box := panel(fill, GOLD if state in ["hover", "focus"] else BRONZE, 20)
+			box.set_corner_radius_all(16 if variant == "TerminalButton" else 10)
+			theme.set_stylebox(state, variant, box)
+		theme.set_font_size("font_size", variant, 22 if variant == "TerminalButton" else 18)
+	for type in ["Label", "RichTextLabel", "LineEdit", "TextEdit", "PopupMenu", "TooltipLabel"]:
+		theme.set_color("font_color", type, TEXT)
+		theme.set_color("font_outline_color", type, BACKGROUND)
+		theme.set_constant("outline_size", type, 0)
+	theme.set_color("default_color", "RichTextLabel", TEXT)
+	theme.set_font("normal_font", "RichTextLabel", font())
+	theme.set_font("bold_font", "RichTextLabel", font(true))
+	theme.set_font_size("normal_font_size", "RichTextLabel", BODY_SIZE)
+	for type in ["PanelContainer", "Panel", "PopupMenu", "TooltipPanel"]:
+		theme.set_stylebox("panel", type, panel(INSET if type == "TooltipPanel" else PANEL))
+	theme.set_stylebox("hover", "PopupMenu", panel(CRIMSON, GOLD, 8))
+	theme.set_stylebox("separator", "PopupMenu", bar(BRONZE.darkened(0.5)))
+	theme.set_color("font_hover_color", "PopupMenu", GOLD)
+	theme.set_color("font_disabled_color", "PopupMenu", DISABLED)
+	theme.set_icon("arrow", "OptionButton", icon("arrow"))
+	theme.set_icon("submenu", "PopupMenu", icon("arrow"))
+	for type in ["CheckBox", "CheckButton", "PopupMenu"]:
+		for state in ["checked", "unchecked", "checked_disabled", "unchecked_disabled", "radio_checked", "radio_unchecked", "radio_checked_disabled", "radio_unchecked_disabled"]:
+			var mark := "on" if state.begins_with("checked") else "empty"
+			if state.begins_with("radio_"): mark = "radio" if state.begins_with("radio_checked") else "radio_empty"
+			theme.set_icon(state, type, icon(mark, DISABLED if state.ends_with("disabled") else GOLD))
+	theme.set_icon("up", "SpinBox", icon("up"))
+	theme.set_icon("down", "SpinBox", icon("arrow"))
+	theme.set_icon("updown", "SpinBox", icon("updown"))
+	for type in ["LineEdit", "TextEdit"]:
+		for state in ["normal", "read_only", "focus"]:
+			theme.set_stylebox(state, type, panel(Color.TRANSPARENT if state == "focus" else INSET, GOLD if state == "focus" else BRONZE.darkened(0.4), 8))
+			theme.set_color("caret_color", type, GOLD)
+			theme.set_color("selection_color", type, CRIMSON)
+			theme.set_color("font_selected_color", type, TEXT)
+			theme.set_color("font_uneditable_color", type, DISABLED)
+	theme.set_stylebox("separator", "HSeparator", bar(BRONZE.darkened(0.5)))
+	for type in ["VScrollBar", "HScrollBar"]:
+		theme.set_stylebox("scroll", type, panel(INSET, INSET, 5))
+		for state in ["grabber", "grabber_highlight", "grabber_pressed"]:
+			theme.set_stylebox(state, type, panel(BRONZE if state == "grabber" else GOLD, BRONZE, 5))
+		for state in ["increment", "increment_highlight", "increment_pressed", "decrement", "decrement_highlight", "decrement_pressed"]:
+			theme.set_icon(state, type, icon("arrow" if state.begins_with("increment") else "up"))
+	theme.set_stylebox("background", "ProgressBar", panel(INSET, BRONZE.darkened(0.5), 0))
+	theme.set_stylebox("fill", "ProgressBar", bar(GOLD))
+	for type in ["VBoxContainer", "HBoxContainer"]: theme.set_constant("separation", type, 12)
+	for direction in ["h_separation", "v_separation"]: theme.set_constant(direction, "GridContainer", 12)
+	add_shell_styles(theme)
+	var colors := palette()
+	for color_name in colors: theme.set_color(color_name, "Game", colors[color_name])
+	for element in AFFINITIES: theme.set_color("affinity_" + element, "Game", AFFINITIES[element])
+	return theme
+
+## Named styles for the UI shell scenes in scenes/ui (header, gauges, prompt, modal, dashboard).
+static func add_shell_styles(theme: Theme) -> void:
+	for spec in [["HeaderPanel", panel(PANEL)], ["ModalPanel", panel(PANEL, GOLD)],
+			["DashboardPanel", panel(INSET, BRONZE)], ["PromptPanel", panel(BACKGROUND, RESPONSE)]]:
+		theme.set_type_variation(spec[0], "PanelContainer")
+		theme.set_stylebox("panel", spec[0], spec[1])
+	for spec in [["EnergyBar", RESPONSE]]:
+		theme.set_type_variation(spec[0], "ProgressBar")
+		theme.set_stylebox("background", spec[0], panel(INSET, BRONZE, 0))
+		theme.set_stylebox("fill", spec[0], bar(spec[1]))
+	# Tension shares the HP palette and rim.
+	theme.set_type_variation("TensionBar", "ProgressBar")
+	theme.set_stylebox("background", "TensionBar", tension_track())
+	theme.set_stylebox("fill", "TensionBar", tension_fill())
+	theme.set_type_variation("HeadingLabel", "Label")
+	theme.set_font("font", "HeadingLabel", font(true))
+
+static func apply_hud(root: Control) -> void:
+	root.theme = get_theme()
+	root.get_node("EndTurnButton").theme_type_variation = "PrimaryButton"
+	# The top bar (player HP, Supplies) sits beside Root so it also shows outside battle.
+	var top_bar: Control = root.get_parent().get_node("TopBar")
+	top_bar.theme = get_theme()
+	for side in ["PlayerHealth", "EnemyHealth"]:
+		var health := top_bar.get_node(side) if side == "PlayerHealth" else root.get_node(side)
+		# Muted bronze fills retain the existing delayed damage bar.
+		var hp_fill := bar(BRONZE.darkened(0.28))
+		hp_fill.set_corner_radius_all(0)
+		hp_fill.set_border_width_all(2)
+		hp_fill.border_color = Color("0e0b0b")
+		health.get_node("Bar").add_theme_stylebox_override("fill", hp_fill)
+		var lag_fill := bar(GOLD.darkened(0.1))
+		lag_fill.set_corner_radius_all(0)
+		lag_fill.border_color = Color("0e0b0b")
+		health.get_node("LagBar").add_theme_stylebox_override("fill", lag_fill)
+		# Dark empty track behind both bars, thin gold rim.
+		var track := panel(INSET, BRONZE.darkened(0.2), 0)
+		track.set_corner_radius_all(0)
+		track.set_border_width_all(1)
+		health.get_node("LagBar").add_theme_stylebox_override("background", track)
+		health.get_node("Bar").add_theme_stylebox_override("background", track)
+		# Player bar: 2px gold rim around the whole bar; fills draw inside the rim.
+		# The enemy bar gets the same rim now.
+		track.set_border_width_all(2)
+		hp_fill.set_border_width_all(0)
+		hp_fill.set_expand_margin_all(-2)
+		lag_fill.set_expand_margin_all(-2)
+		# Min fill: 10px min width minus the 2px inset on each side shows about 6px above 0 HP.
+		# ProgressBar draws no fill at 0.
+		for fill in [hp_fill, lag_fill]:
+			fill.content_margin_left = 5
+			fill.content_margin_right = 5
+		style_health_panel(health)
+
+## Both hero widgets keep the same node paths and live health animation controls.
+static func style_health_panel(health: Control) -> void:
+	var plate: Panel = health.get_node("Plate")
+	plate.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	plate.offset_left = 0
+	plate.offset_top = 0
+	plate.offset_right = 0
+	plate.offset_bottom = 0
+	var frame := panel(PANEL, BRONZE.darkened(0.2), 0)
+	frame.set_border_width_all(1)
+	frame.set_corner_radius_all(3)
+	plate.add_theme_stylebox_override("panel", frame)
+	var caption: Label = health.get_node("Caption")
+	caption.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	caption.offset_left = 8
+	caption.offset_right = -28
+	caption.offset_top = 0
+	caption.offset_bottom = 24
+	caption.add_theme_font_size_override("font_size", 18)
+	for node_name in ["Bar", "LagBar", "Value"]:
+		var control: Control = health.get_node(node_name)
+		control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		control.offset_left = 8
+		control.offset_right = -8
+		control.offset_top = 25
+		control.offset_bottom = -5
+	var value: Label = health.get_node("Value")
+	value.add_theme_font_size_override("font_size", 18)
+	for label in [caption, value]:
+		label.add_theme_color_override("font_color", TEXT)
+		label.add_theme_constant_override("outline_size", 0)
+	var mark := Label.new()
+	mark.name = "HealthMark"
+	mark.text = "+"
+	mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	mark.offset_left = -28
+	mark.offset_right = -6
+	mark.offset_top = 0
+	mark.offset_bottom = 24
+	mark.add_theme_font_size_override("font_size", 22)
+	mark.add_theme_color_override("font_color", GOLD)
+	if not health.has_node("HealthMark"): health.add_child(mark)
+	else: mark.free()

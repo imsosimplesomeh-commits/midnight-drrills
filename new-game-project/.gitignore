@@ -1,0 +1,12 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Generated test screenshots
+/tests/artifacts/*
+!/tests/artifacts/.gdignore
+
+# Local runs, build outputs and Python audit caches
+*.log
+/builds/
+__pycache__/

@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/board/meshy_game_board.glb" id="1_board"]
+
+[node name="SchoolDrillBoard" type="Node3D"]
+
+[node name="ImportedBoard" parent="." instance=ExtResource("1_board")]
+position = Vector3(0.00114, 1.020574, -0.001924)
+rotation = Vector3(-1.5707963, 0, 0)
+scale = Vector3(2.78552, 3.03673, 0.244)
