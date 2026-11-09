@@ -7,8 +7,57 @@ const Route = preload("res://scripts/route_style.gd")
 static func current(content, kind: String) -> bool:
 	return is_instance_valid(content) and content.get_meta("style_kind", "") == kind
 
+## Dark panels that end under their last row (rule 2). Deck, workshop and graveyard stay full screen.
+const FIT_KINDS := ["event", "shop", "confirm", "choice", "remove_confirm", "log"]
+
+## Makes a dark panel as tall as its content, centred and under the top bar.
+## It runs again one frame later, when wrapped labels know their real width.
+## A signal, not await: a waiting function would leak when the game quits.
+static func fit_height(modal: Control, content_node, kind: String) -> void:
+	_fit_once(modal, content_node, kind)
+	if not modal.is_inside_tree(): return
+	var again := _fit_again.bind(modal, content_node, kind)
+	var frame := modal.get_tree().process_frame
+	if not frame.is_connected(again): frame.connect(again, CONNECT_ONE_SHOT)
+
+static func _fit_once(modal: Control, content_node, kind: String) -> void:
+	if not current(content_node, kind): return
+	var content: Control = content_node
+	var view := modal.get_viewport_rect().size
+	var plate := modal.get_theme_stylebox("panel").get_minimum_size().y
+	var height := minf(plate + content.get_combined_minimum_size().y + 2, view.y - 90)
+	modal.offset_top = maxf(66, (view.y - height) / 2)
+	modal.offset_bottom = -(view.y - modal.offset_top - height)
+
+## Untyped: the modal can be freed (return to title) before the next frame.
+static func _fit_again(modal, content_node, kind: String) -> void:
+	if not is_instance_valid(modal) or not modal.is_inside_tree(): return
+	_fit_once(modal, content_node, kind)
+	# The battle log grows with its text, so open it at the newest line.
+	if kind != "log" or not current(content_node, kind): return
+	var scroll := (content_node as Control).get_parent() as ScrollContainer
+	if scroll:
+		scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+
+## Thin gold line under a dark panel title. It ends in a small diamond on the right.
+static func title_rule(content: Control, heading_index: int) -> void:
+	if content.has_node("TitleRule"): return
+	var rule := HSeparator.new()
+	rule.name = "TitleRule"
+	rule.add_theme_constant_override("separation", 12)
+	var line = load("res://scripts/ui_title_rule.gd").new()
+	line.color = UI.GOLD
+	rule.add_theme_stylebox_override("separator", line)
+	content.add_child(rule)
+	content.move_child(rule, heading_index + 1)
+
+## Gold title of a dark panel: one size everywhere (rule 4).
+static func title_size(heading: Label) -> void:
+	heading.add_theme_font_size_override("font_size", UI.HEADING_SIZE)
+
 static func apply(modal: Control, content_node, kind: String) -> void:
 	if not current(content_node, kind): return
+	fit_height(modal, content_node, kind)
 	var content: Control = content_node
 	if content.has_node("Center/Box"):
 		content = content.get_node("Center/Box")
@@ -33,12 +82,10 @@ static func apply(modal: Control, content_node, kind: String) -> void:
 	heading.reparent(header)
 	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	heading.add_theme_font_size_override("font_size", 32)
+	title_size(heading)
 	readable_notes(content)
-	var rule := HSeparator.new()
-	content.add_child(rule)
-	content.move_child(rule, 1)
-	var panel := Route.plate(Color("191714"), Color("a47937"))
+	title_rule(content, 0)
+	var panel := dark_plate()
 	panel.content_margin_left = 28
 	panel.content_margin_right = 28
 	panel.content_margin_top = 24
@@ -49,27 +96,29 @@ static func apply(modal: Control, content_node, kind: String) -> void:
 static func style_actions(parent: Node) -> void:
 	for child in parent.get_children():
 		if child is Node3D or child is SubViewport: continue
-		if child is Button:
-			child.custom_minimum_size.y = 54
-			child.add_theme_font_size_override("font_size", 21)
-			for state in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
-				var fill := Color("2c251d")
-				if state == "hover": fill = Color("594124")
-				if state in ["pressed", "hover_pressed"]: fill = Color("76552d")
-				if state == "disabled": fill = Color("211e19")
-				if state == "focus": fill = Color.TRANSPARENT
-				child.add_theme_stylebox_override(state, Route.plate(fill,
-					UI.TEXT if state == "focus" else Color("a47937")))
-			child.add_theme_color_override("font_color", UI.TEXT)
-			child.add_theme_color_override("font_hover_color", Color("ffe5ac"))
-			child.add_theme_color_override("font_pressed_color", Color("ffe5ac"))
-			child.add_theme_color_override("font_hover_pressed_color", Color("ffe5ac"))
-			child.add_theme_color_override("font_focus_color", UI.TEXT)
-			child.add_theme_color_override("font_disabled_color", Color("968b78"))
-			if child.name == "LeaveButton":
-				child.size_flags_horizontal = Control.SIZE_SHRINK_END
-				child.custom_minimum_size.x = 200
+		if child is Button: style_button(child)
 		style_actions(child)
+
+## The one dark-family button style. Exit buttons (Leave, Close, Cancel, Back) get their size
+## and place in their .tscn.
+static func style_button(button: Button) -> void:
+	button.custom_minimum_size.y = 54
+	button.add_theme_font_size_override("font_size", 21)
+	# The look itself comes from the shared builder in ui_theme.gd (charcoal, gold line, cut corners).
+	var danger := button.text.begins_with("Abandon") or button.text.begins_with("Destroy")
+	UI.style_button(button, danger)
+
+## Dark family colours, all made from the ui_theme palette (rule 3).
+## Neutral charcoal, no warm brown.
+static func dark_fill() -> Color:
+	return UI.PANEL.darkened(0.15)
+
+static func dark_rim() -> Color:
+	return UI.GOLD
+
+## The dark panel plate: charcoal, crisp gold line, cut corners.
+static func dark_plate() -> StyleBoxFlat:
+	return UI.sharp_panel(dark_fill(), dark_rim(), 14)
 
 static func catalog(modal: Control, content_node, kind: String) -> void:
 	if not current(content_node, kind): return
@@ -81,7 +130,7 @@ static func catalog(modal: Control, content_node, kind: String) -> void:
 	var heading := Label.new()
 	heading.name = "CatalogHeading"
 	heading.text = titles.get(kind, kind.to_upper())
-	heading.add_theme_font_size_override("font_size", 30)
+	title_size(heading)
 	heading.add_theme_color_override("font_color", UI.GOLD)
 	if content.get_child_count() > 0 and content.get_child(0) is Label:
 		var old: Label = content.get_child(0)
@@ -90,16 +139,18 @@ static func catalog(modal: Control, content_node, kind: String) -> void:
 		old.queue_free()
 	content.add_child(heading)
 	content.move_child(heading, 0)
-	var panel := Route.plate(Color("191714"), Color("a47937"))
+	var panel := dark_plate()
 	panel.content_margin_left = 28
 	panel.content_margin_right = 28
-	panel.content_margin_top = 22
-	panel.content_margin_bottom = 22
+	# Same margins as the room panels, so the titles sit in the same place.
+	panel.content_margin_top = 24
+	panel.content_margin_bottom = 24
 	modal.add_theme_stylebox_override("panel", panel)
 	for toolbar_name in ["Tabs", "SortRow"]:
 		var toolbar := content.get_node_or_null(toolbar_name) as BoxContainer
 		if toolbar: toolbar.add_theme_constant_override("separation", 12)
 	readable_notes(content)
+	title_rule(content, 0)
 	style_actions(content)
 	for footer in ["LeaveButton", "BackButton", "BeginButton"]:
 		var action := content.get_node_or_null(footer) as Button
@@ -127,20 +178,28 @@ static func readable_notes(content: Control) -> void:
 	if content.get_child_count() < 2: return
 	var note := content.get_child(1) as Label
 	if note == null: return
+	# The card picker hint stays small and muted.
+	if note.has_meta("pick_hint"): return
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	note.add_theme_font_size_override("font_size", 19)
-	note.add_theme_color_override("font_color", Color("b9ab92"))
+	note.add_theme_color_override("font_color", UI.TEXT.darkened(0.2))
 
-## Confirmations, pickers and the battle log: the same bronze plate as the rooms, smaller.
+## Confirmations, pickers and the battle log: the same charcoal plate as the rooms, smaller.
 static func compact(modal: Control, content_node, kind: String) -> void:
 	if not current(content_node, kind): return
 	var content: Control = content_node
-	var panel := Route.plate(Color("191714"), Color("a47937"))
+	var panel := dark_plate()
 	panel.set_content_margin_all(22)
 	modal.add_theme_stylebox_override("panel", panel)
+	# The gold title made by reset_panel() is the first child.
+	var heading: Label = null
+	if content.get_child_count() > 0: heading = content.get_child(0) as Label
+	if heading and heading.get_theme_color("font_color") == UI.GOLD: title_size(heading)
 	# Log lines are the content itself, not a note.
 	if kind != "log": readable_notes(content)
+	if heading and heading.get_theme_color("font_color") == UI.GOLD: title_rule(content, 0)
 	style_actions(content)
+	fit_height(modal, content_node, kind)
 	# Keyboard and controller start on the safe answer of a confirmation.
 	if kind == "confirm": focus_button(content, true)
 

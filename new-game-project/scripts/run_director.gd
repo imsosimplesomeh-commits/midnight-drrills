@@ -5,6 +5,7 @@ const UI = preload("res://scripts/ui_theme.gd")
 const MenuSkin = preload("res://scripts/suspended_menu.gd")
 const RouteCanvas = preload("res://scripts/route_canvas.gd")
 const CardFace = preload("res://scripts/card_3d.gd")
+const CardPick = preload("res://scripts/card_pick.gd")
 const Rules = preload("res://scripts/battle_rules.gd")
 const CardRules = preload("res://scripts/run_card_rules.gd")
 const Routes = preload("res://scripts/run_routes.gd")
@@ -267,6 +268,8 @@ func show_characters() -> void:
 		pick.disabled = not character.available
 		preload("res://scripts/room_menu_style.gd").identity(pick.get_parent().get_parent(), character.available)
 	hook_button(box.get_node("BackButton"), show_title)
+	# Back sits on the dark backdrop, so it uses the dark button style like every other Back.
+	preload("res://scripts/room_menu_style.gd").style_button(box.get_node("BackButton"))
 
 func character_deck(index: int) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -390,6 +393,9 @@ func _build_ui() -> void:
 		if modal.visible:
 			_panel_layout(screen)
 			_skin_menu()
+			# Dark panels that fit their content are measured again for the new size.
+			var room_style := preload("res://scripts/room_menu_style.gd")
+			if screen in room_style.FIT_KINDS: room_style.fit_height.call_deferred(modal, content, screen)
 	)
 	# Same font, size and color that label() gives.
 	idle_hint = root.get_node("IdleHint")
@@ -920,6 +926,9 @@ func _panel_layout(kind: String) -> void:
 	var suspended := kind in ["plans", "menu", "settings", "buff", "reward", "contingency_reward", "floor_buff"]
 	modal.set_meta("suspended_menu", suspended)
 	modal.get_node("IndustrialTrim").visible = not suspended
+	# Dark game screens get corner brackets and a faint hatch; the cream result notices do not.
+	modal.get_node("IndustrialTrim").chrome = not suspended and kind not in ["victory", "result"]
+	modal.get_node("IndustrialTrim").queue_redraw()
 	compact_layout = suspended or kind in ["confirm", "debug_password", "debug", "log", "choice", "remove_confirm"]
 	modal.custom_minimum_size = Vector2.ZERO
 	modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1003,7 +1012,8 @@ func reset_panel(title: String, subtitle: String, kind: String) -> void:
 	if modal.get_meta("suspended_menu", false): _skin_menu.call_deferred()
 	modal.show()
 	if not title.is_empty(): content.add_child(label(title, 24 if compact_layout else 30, UI.GOLD, compact_layout))
-	if not subtitle.is_empty(): content.add_child(label(subtitle, 16, UI.MUTED, true))
+	# Body text 18 in the 1440x900 layout shows as 16 px at 1280x800.
+	if not subtitle.is_empty(): content.add_child(label(subtitle, 18, UI.MUTED, true))
 	game.presentation.reveal(content)
 	# The style hooks run next frame; they skip if another screen replaced this one first.
 	content.set_meta("style_kind", kind)
@@ -1515,7 +1525,7 @@ func _card_tile(card: Dictionary, parent: Node, action: Callable = Callable(),
 		action_text: String = "", show_name: bool = false) -> void:
 	# The tile layout lives in ui_card_tile.tscn; the card face is made here.
 	var panel: Control = CardTileScene.instantiate()
-	panel.add_theme_stylebox_override("panel", style(UI.PANEL, UI.BRONZE))
+	panel.add_theme_stylebox_override("panel", UI.sharp_panel(UI.PANEL, UI.GOLD.darkened(0.3)))
 	parent.add_child(panel)
 	var box: Control = panel.get_node("Box")
 	if show_name:
@@ -1679,7 +1689,7 @@ func show_deck() -> void:
 	var deck_button: Button = content.get_node("Tabs/DeckButton")
 	deck_button.text = "Cards (%d)" % shown.size()
 	hook_button(deck_button, deck_cards.bind(shown))
-	hook_button(content.get_node("Tabs/CloseButton"), close_modal)
+	hook_button(content.get_node("CloseButton"), close_modal)
 	setup_sort_controls(content.get_node("SortRow"), false)
 	deck_cards(shown)
 
@@ -1817,7 +1827,7 @@ func refresh_graveyard() -> void:
 	# The layout lives in ui_graveyard.tscn; the card tiles are made here, like the Deck view.
 	unpack_screen(GraveyardScene)
 	var tabs: Control = content.get_node("Tabs")
-	hook_button(tabs.get_node("CloseButton"), close_modal)
+	hook_button(content.get_node("CloseButton"), close_modal)
 	var sort: OptionButton = tabs.get_node("Sort")
 	for key in SORT_KEYS: sort.add_item("Recently added" if key == "acquired" else str(key).capitalize())
 	sort.select(deck_sort)
@@ -2413,7 +2423,11 @@ func balance_evolution_decision(accepted: bool) -> void:
 func choose_card(title: String, cards: Array, callback: Callable, cancel: Callable,
 		subtitle: String = "", show_names: bool = false) -> void:
 	card_picker = true
-	reset_panel(title, subtitle, "choice")
+	# No Choose button: one click selects a card, a double click chooses it. The line under the title says so.
+	var line_width := minf(CARD_PICKER_WIDTH, get_viewport().get_visible_rect().size.x - 32) - 60
+	reset_panel(title, CardPick.subtitle(subtitle, line_width), "choice")
+	var hint: Node = content.get_child(content.get_child_count() - 1)
+	if hint is Label and hint.text == CardPick.HINT: hint.set_meta("pick_hint", true)
 	action_cancel = cancel
 	# The layout lives in ui_choose_cards.tscn: one row of cards that scrolls sideways.
 	unpack_screen(ChooseCardsScene)
@@ -2426,7 +2440,8 @@ func choose_card(title: String, cards: Array, callback: Callable, cancel: Callab
 	)
 	for entry in sorted:
 		var definition: Dictionary = live_definition(entry) if entry is Node else entry
-		_card_tile(definition, row, callback.bind(entry), "Choose", show_names)
+		_card_tile(definition, row, Callable(), "", show_names)
+		CardPick.make_pickable(row.get_child(-1), str(definition.name), callback.bind(entry))
 	hook_button(content.get_node("CancelButton"), cancel)
 
 func choose_evolution_targets(cards: Array, callback: Callable, cancel: Callable) -> void:
