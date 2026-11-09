@@ -1,6 +1,6 @@
 extends SceneTree
 ## p2-parity Part 2. The LAN client (Player 2) screens use the game's UI: the wait before the first view,
-## the coin page buttons and the Esc menu (the host's ui_menu.tscn with its cream skin). The old 2D panel
+## the coin page buttons and the Esc menu (the host's ui_menu.tscn with its dark skin). The old 2D panel
 ## stays hidden in a normal match. Real loopback: the real client lan_title joins a plain LanSession host.
 
 const LanSession = preload("res://scripts/lan_session.gd")
@@ -100,7 +100,7 @@ func check_waiting() -> void:
 	expect(lan.client_cover.theme == director.root.theme, "waiting: the cover uses the game theme")
 
 
-# The coin page side buttons use the game theme, so they are not Godot's grey default.
+# The coin page side buttons use the game's shared button look, so they are not Godot's grey default.
 func check_coin() -> void:
 	other.lobby = true
 	other.send_event("coin", {"stage": "choosing", "call": 0, "result": 1, "winner": 2})
@@ -108,8 +108,10 @@ func check_coin() -> void:
 	await frames(2)
 	expect(lan.coin_page.theme == director.root.theme, "coin: the page uses the game theme")
 	var button: Button = lan.coin_page.find_child("PreparednessButton", true, false)
-	expect(button != null and button.get_theme_stylebox("normal") == director.root.theme.get_stylebox(
-		"normal", "Button"), "coin: the side button draws with the game's button style")
+	var normal: StyleBox = button.get_theme_stylebox("normal") if button != null else null
+	var shared: StyleBoxFlat = preload("res://scripts/ui_theme.gd").button_box("normal")
+	expect(normal is StyleBoxFlat and normal.bg_color == shared.bg_color
+		and normal.border_color == shared.border_color, "coin: the side button draws with the game's button style")
 
 
 # Esc opens the host's menu with the same labels. Resume closes it.
@@ -121,7 +123,7 @@ func check_menu() -> void:
 	expect(lan.client_layer.get_child(-1) == menu, "menu: on top of the coin page")
 	expect(menu.theme == director.root.theme, "menu: the game theme")
 	var frame: StyleBox = menu.get_theme_stylebox("panel")
-	expect(frame is StyleBoxFlat and frame.bg_color == MenuSkin.CREAM, "menu: the host's cream frame")
+	expect(frame is StyleBoxFlat and frame.bg_color == MenuSkin.frame_fill(), "menu: the host's dark frame")
 	expect(menu.find_child("SuspendedFrame", true, false) != null, "menu: the straps above the frame")
 	var labels: Array = menu.find_children("*", "Label", true, false).map(func(label: Label) -> String:
 		return label.text)

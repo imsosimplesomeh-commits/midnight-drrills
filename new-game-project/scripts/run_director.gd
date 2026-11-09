@@ -121,6 +121,8 @@ var buff_choices: Array = []
 var intel_revealed := false
 var idle_hint: Label
 var seal_tooltip: Label
+var hand_tip: PanelContainer # small panel over a hovered hand card: what it does and where it goes
+var hand_tip_card: Node
 var boss_intent: Label
 var plans_button: Button
 var versus_hud: Node # Versus-only HUD look, see versus_hud.gd
@@ -302,7 +304,7 @@ func start_character(index: int) -> void:
 	last_character = index
 	new_run()
 
-func style(color: Color = UI.PANEL, border: Color = UI.BRONZE) -> StyleBoxFlat:
+func style(color: Color = UI.PANEL, border: Color = UI.GOLD) -> StyleBoxFlat:
 	return UI.panel(color, border)
 
 func label(text: String, font_size: int = 20, color: Color = UI.TEXT, wrap_text: bool = false) -> Label:
@@ -326,6 +328,8 @@ func button(text: String, action: Callable, parent: Node) -> Button:
 	parent.add_child(b)
 	if text.begins_with("Confirm") or text.begins_with("Abandon") or text.begins_with("Destroy"):
 		b.theme_type_variation = "PrimaryButton"
+	# Every made-in-code button gets the one shared look; Abandon and Destroy get the crimson line.
+	UI.style_button(b, text.begins_with("Abandon") or text.begins_with("Destroy"))
 	game.presentation.button_feedback(b)
 	return b
 
@@ -412,6 +416,7 @@ func _build_ui() -> void:
 	seal_tooltip.add_theme_stylebox_override("normal", style(UI.PANEL, UI.GOLD))
 	seal_tooltip.hide()
 	root.add_child(seal_tooltip)
+	_build_hand_tip()
 	var intent_panel: Control = root.get_node("BossIntent")
 	boss_intent = intent_panel.get_node("%IntentLabel")
 	plans_button = scene_hud.get_node("PlansBox/PlansButton")
@@ -429,6 +434,7 @@ func _build_ui() -> void:
 	board_prompt = root.get_node("BoardPrompt")
 	board_prompt_label = board_prompt.get_node("%PromptLabel")
 	var cancel_button: Button = board_prompt.get_node("%CancelButton")
+	UI.style_button(cancel_button)
 	cancel_button.pressed.connect(func(): game.board_input.cancel())
 	game.presentation.button_feedback(cancel_button)
 	# Disaster panel for a human Versus Disaster turn. Below the modal, so a popup covers it.
@@ -436,6 +442,8 @@ func _build_ui() -> void:
 	root.add_child(disaster_panel)
 	root.move_child(disaster_panel, modal_frame.get_index())
 	var end_button: Button = disaster_panel.get_node("%EndButton")
+	# Disaster panel buttons use the shared look too.
+	for panel_button in disaster_panel.find_children("*", "Button", true, false): UI.style_button(panel_button)
 	end_button.pressed.connect(func(): game.disaster_actions.end_turn())
 	game.presentation.button_feedback(end_button)
 	disaster_panel.get_node("%Reason").add_theme_color_override("font_color", UI.GOLD)
@@ -451,6 +459,7 @@ func _build_ui() -> void:
 	privacy_screen = PrivacyScreenScene.instantiate()
 	add_child(privacy_screen)
 	var ready_button: Button = privacy_screen.get_node("%ReadyButton")
+	UI.style_button(ready_button)
 	ready_button.pressed.connect(_hide_privacy_screen)
 	game.presentation.button_feedback(ready_button)
 
@@ -570,6 +579,7 @@ func _add_disaster_row(list: Control, card: Dictionary) -> void:
 	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	row.disabled = state != "on"
+	UI.style_button(row)
 	if state == "on": row.pressed.connect(_disaster_row_clicked.bind(card))
 	list.add_child(row)
 
@@ -712,12 +722,12 @@ func _make_gauge(box_name: String, title: String, color: Color, variation: Strin
 ## One square pip per energy point. Full = crimson with a gold rim, spent = dark and empty.
 func _draw_energy_pips(pips: Control) -> void:
 	var full := StyleBoxFlat.new()
-	full.bg_color = Color("b3261e")
-	full.border_color = Color("e0a93b")
+	full.bg_color = UI.CRIMSON
+	full.border_color = UI.GOLD
 	full.set_border_width_all(2)
 	var spent := StyleBoxFlat.new()
-	spent.bg_color = Color("1a1415")
-	spent.border_color = Color("3a3032")
+	spent.bg_color = UI.INSET
+	spent.border_color = UI.MUTED.darkened(0.45)
 	spent.set_border_width_all(2)
 	for i in game.energy_cap:
 		var box := full if i < game.preparedness else spent
@@ -751,6 +761,7 @@ func _process(_delta: float) -> void:
 	game.disaster_draw.refresh_button()
 	_refresh_disaster_panel()
 	_refresh_seal_tooltip()
+	_refresh_hand_tip()
 	prep.max_value = game.energy_cap
 	prep.value = game.preparedness
 	threat.max_value = game.tension_cap
@@ -763,6 +774,10 @@ func _process(_delta: float) -> void:
 	if pips_now != _pips_drawn:
 		_pips_drawn = pips_now
 		game.get_node("HUD/Root/EnergyPips").queue_redraw()
+		# At 0 energy the numbers go grey, so the empty gauge reads as empty.
+		var energy_color := UI.MUTED if game.preparedness <= 0 else UI.TEXT
+		for gauge_label in ["Value", "Title"]:
+			prep.get_parent().get_node(gauge_label).add_theme_color_override("font_color", energy_color)
 	game.get_node("HUD/TopBar/SuppliesLabel").text = "%d" % coins
 	graveyard_button.get_node("CountLabel").text = str(game.player_graveyard.size())
 	root.get_child(0).visible = screen not in ["title", "title_help", "characters", "character_preview"]
@@ -894,6 +909,72 @@ func _input(event: InputEvent) -> void:
 			_: return
 		get_viewport().set_input_as_handled()
 
+## The hand card hover panel: name, rule text and a line about valid targets.
+func _build_hand_tip() -> void:
+	hand_tip = PanelContainer.new()
+	hand_tip.name = "HandTip"
+	hand_tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hand_tip.add_theme_stylebox_override("panel", UI.sharp_panel(UI.INSET, UI.GOLD, 12))
+	var box := VBoxContainer.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_constant_override("separation", 4)
+	hand_tip.add_child(box)
+	for line in [["TipName", UI.GOLD], ["TipRules", UI.TEXT], ["TipTargets", UI.GOLD]]:
+		var tip_label := label("", 18, line[1], true)
+		tip_label.name = line[0]
+		tip_label.custom_minimum_size.x = 320
+		box.add_child(tip_label)
+	hand_tip.hide()
+	root.add_child(hand_tip)
+
+## Shows the panel above the hovered hand card and hides it at once when the mouse leaves.
+func _refresh_hand_tip() -> void:
+	var card: Node = game.hovered_hand_card if battle_active and not modal.visible else null
+	if not is_instance_valid(card) or not card.in_hand or game.seat_prep != "local": card = null
+	if card != hand_tip_card:
+		hand_tip_card = card
+		hand_tip.visible = card != null
+		if card == null: return
+		var box: Control = hand_tip.get_child(0)
+		box.get_node("TipName").text = str(card.card_data.get("name", "Card"))
+		# The same rule text as the card dossier, without its empty lines.
+		box.get_node("TipRules").text = card_rules(live_definition(card)).strip_edges().replace("\n\n", "\n")
+		var targets := hand_tip_targets(card)
+		box.get_node("TipTargets").text = targets
+		box.get_node("TipTargets").add_theme_color_override("font_color",
+			UI.GOLD if targets.begins_with("Drop") else UI.DANGER)
+		hand_tip.reset_size()
+	if card == null: return
+	# Above the card face, kept inside the screen.
+	var corners: PackedVector2Array = game.hand_card_polygon(card, false)
+	var top := INF
+	var middle := 0.0
+	for point in corners:
+		top = minf(top, point.y)
+		middle += point.x / corners.size()
+	var view := get_viewport().get_visible_rect().size
+	var x := clampf(middle - hand_tip.size.x / 2, 8, view.x - hand_tip.size.x - 8)
+	var y := clampf(top - hand_tip.size.y - 8, 60, view.y - hand_tip.size.y - 8)
+	hand_tip.position = Vector2(x, y)
+
+## One line about where this hand card can go now, from the same rule check the play uses.
+func hand_tip_targets(card: Node) -> String:
+	var index: int = game.get_hand_cards().find(card)
+	var problem: String = game.preparedness_actions.hand_problem(index)
+	var cost := int(card.card_data.get("cost", 0))
+	match problem:
+		"no_energy": return "Need %d more energy" % (cost - game.preparedness)
+		"sealed": return "Sealed this turn"
+		"lane_full": return "No empty lane"
+		"no_target": return "No valid target"
+		"draw_first": return "Draw a card first"
+	var free := 0
+	for slot in game._response_slots():
+		if game._get_card_in_slot(slot) == null: free += 1
+	if free == 0: return "No empty lane"
+	if card.card_data.get("utility", false): return "Drop on an empty lane to cast"
+	return "Drop on a lit empty lane · %d free" % free
+
 func _refresh_seal_tooltip() -> void:
 	seal_tooltip.hide()
 	if game.encounter_kind != "versus" or not battle_active or modal.visible or privacy_screen.visible: return
@@ -926,8 +1007,8 @@ func _panel_layout(kind: String) -> void:
 	var suspended := kind in ["plans", "menu", "settings", "buff", "reward", "contingency_reward", "floor_buff"]
 	modal.set_meta("suspended_menu", suspended)
 	modal.get_node("IndustrialTrim").visible = not suspended
-	# Dark game screens get corner brackets and a faint hatch; the cream result notices do not.
-	modal.get_node("IndustrialTrim").chrome = not suspended and kind not in ["victory", "result"]
+	# Dark game screens get corner brackets and a faint hatch; the result notices are dark now too.
+	modal.get_node("IndustrialTrim").chrome = not suspended
 	modal.get_node("IndustrialTrim").queue_redraw()
 	compact_layout = suspended or kind in ["confirm", "debug_password", "debug", "log", "choice", "remove_confirm"]
 	modal.custom_minimum_size = Vector2.ZERO
@@ -1223,7 +1304,7 @@ func show_versus_closed() -> void:
 	column.add_child(cords)
 	for cord in 2:
 		var line := ColorRect.new()
-		line.color = UI.BRONZE.darkened(0.2)
+		line.color = UI.GOLD.darkened(0.3)
 		line.custom_minimum_size = Vector2(8, 90)
 		cords.add_child(line)
 	var sign_panel := PanelContainer.new()
@@ -1236,7 +1317,7 @@ func show_versus_closed() -> void:
 	column.add_child(sign_panel)
 	# A thin inner frame, like the plate of a real shop sign.
 	var inner := PanelContainer.new()
-	var rim := UI.panel(Color(0, 0, 0, 0), UI.BRONZE, 30)
+	var rim := UI.panel(Color(0, 0, 0, 0), UI.GOLD, 30)
 	rim.set_border_width_all(2)
 	rim.set_corner_radius_all(4)
 	inner.add_theme_stylebox_override("panel", rim)
@@ -1299,8 +1380,11 @@ func show_rest() -> void:
 	var rest_button: Button = content.get_node("RestButton")
 	rest_button.text = "Rest · +%d HP · free" % healing_gain(7)
 	hook_button(rest_button, rest).disabled = healing_gain(7) == 0
+	if rest_button.disabled: rest_button.tooltip_text = "Already at full health"
 	hook_button(content.get_node("TrainButton"), show_upgrade)
-	hook_button(content.get_node("DestroyButton"), show_remove_cards.bind("rest")).disabled = collection.size() <= 5
+	var destroy: Button = content.get_node("DestroyButton")
+	hook_button(destroy, show_remove_cards.bind("rest")).disabled = collection.size() <= 5
+	if destroy.disabled: destroy.tooltip_text = "Your deck needs more than 5 cards"
 	hook_button(content.get_node("LeaveButton"), finish_room)
 
 func healing_gain(amount: int) -> int:
@@ -1371,7 +1455,7 @@ func show_contingency_reward(next_screen: String, restore_offers: bool = false) 
 func _style_reward_choice(pick: Button, symbol: String) -> void:
 	pick.clip_text = false
 	pick.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	pick.icon = UI.icon(symbol, MenuSkin.INK)
+	pick.icon = UI.icon(symbol, UI.GOLD)
 	pick.expand_icon = true
 	pick.add_theme_constant_override("icon_max_width", 28)
 	pick.add_theme_font_size_override("font_size", 23)
@@ -2523,7 +2607,7 @@ func show_buff_choices(restore_offers: bool = false) -> void:
 		var pick := choice_tile(buff.name, buff.description, select_buff.bind(buff.id), row)
 		pick.clip_text = false
 		pick.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pick.icon = UI.icon(symbols.get(buff.id, "strength"), MenuSkin.INK)
+		pick.icon = UI.icon(symbols.get(buff.id, "strength"), UI.GOLD)
 		pick.expand_icon = true
 		pick.add_theme_constant_override("icon_max_width", 28)
 		pick.custom_minimum_size.y = 76
