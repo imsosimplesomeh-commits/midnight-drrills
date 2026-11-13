@@ -1,6 +1,8 @@
 extends Node3D
 const Sfx = preload("res://scripts/sfx_call.gd")
 const BattleEngine = preload("res://scripts/battle_engine.gd")
+const DisasterAI = preload("res://scripts/disaster_ai.gd")
+const RoomSetup = preload("res://scripts/game_room_setup.gd")
 const BattleQueries = preload("res://scripts/battle_query_adapter.gd")
 const VersusBalance = preload("res://scripts/versus_balance.gd")
 const BattleRules = preload("res://scripts/battle_rules.gd")
@@ -435,85 +437,14 @@ func limit_early_specials(floor_level: int) -> void:
 	while selected.size() < enemy_deck.size(): selected.append(basic.pick_random().duplicate(true))
 	enemy_deck.assign(selected)
 
-# =================================================================== ENVIRONMENT
-func _build_environment() -> void:
-	var school := preload("res://scripts/supplied_classroom.gd").new()
-	add_child(school)
+# Room build (classroom, board, lighting, finish) lives in game_room_setup.gd.
+func _build_environment() -> void: RoomSetup.build_environment(self)
 
-# =================================================================== BOARD
-## Cards, hit areas and drop highlights share the imported board's painted slot centers.
-func _build_board() -> void:
-	var playmat := preload("res://scripts/card_playmat.gd")
-	for slot: MeshInstance3D in $Slots.get_children():
-		var column := int(str(slot.name).right(1)) - 1
-		var row := 0 if str(slot.name).begins_with("Threat") else 1
-		slot.position = Vector3(playmat.SLOT_COLUMNS[column] * playmat.WIDTH,
-			playmat.SLOT_HEIGHT, playmat.SLOT_ROWS[row] * playmat.DEPTH)
-		# A flat overlay sits just above the recess floor; a box adds a raised top face.
-		var highlight := PlaneMesh.new()
-		highlight.size = Vector2(1.1, 1.5)
-		slot.mesh = highlight
-		slot.scale = Vector3(BOARD_SCALE, 1, BOARD_SCALE)
-	add_child(playmat.new())
+func _build_board() -> void: RoomSetup.build_board(self)
 
-# =================================================================== LIGHTING
-func _build_lighting() -> void:
-	var env_node = get_node_or_null("WorldEnvironment")
-	if env_node and env_node.environment:
-		var env: Environment = env_node.environment
-		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-		env.ambient_light_color = Color("9fa8af")
-		env.ambient_light_energy = 0.24
-		# Preserve the supplied metallic lockers' colour with soft environment
-		# reflections, while the visible background and diffuse room stay dark.
-		var reflection_sky := Sky.new()
-		var reflection_material := ProceduralSkyMaterial.new()
-		reflection_material.sky_top_color = Color(.55, .59, .64)
-		reflection_material.sky_horizon_color = Color(.61, .63, .65)
-		reflection_material.ground_horizon_color = Color(.36, .38, .39)
-		reflection_material.ground_bottom_color = Color(.27, .28, .29)
-		reflection_sky.sky_material = reflection_material
-		env.sky = reflection_sky
-		env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-		env.tonemap_mode = Environment.TONE_MAPPER_ACES
-		env.adjustment_enabled = true
-		env.adjustment_contrast = 1.04
-		env.adjustment_saturation = 0.82
-		var enhanced := RenderingServer.get_current_rendering_method() == "forward_plus"
-		env.ssao_enabled = enhanced
-		env.ssao_radius = 0.65
-		env.ssao_intensity = 1.3
-		env.ssao_power = 1.15
-		env.ssao_detail = 0.8
-		env.ssil_enabled = enhanced
-		env.ssil_radius = 3.0
-		env.ssil_intensity = 0.65
-		env.volumetric_fog_enabled = enhanced
-		env.volumetric_fog_density = 0.002
-		env.volumetric_fog_albedo = Color("b4b4a3")
-		env.volumetric_fog_anisotropy = 0.55
-		env.glow_enabled = enhanced
-		env.glow_intensity = 0.65
-		env.glow_bloom = 0.0
-		env.glow_hdr_threshold = 1.2
-		env.glow_hdr_scale = 1.4
-		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
-		for level in 7: env.set_glow_level(level, [0.8, 0.65, 0.4, 0.2, 0.1, 0.0, 0.0][level])
+func _build_lighting() -> void: RoomSetup.build_lighting(self)
 
-func _build_visual_finish() -> void:
-	# Only color-grade the 3D world, not the HUD.
-	var layer := CanvasLayer.new()
-	layer.name = "ClassroomFinish"
-	layer.layer = 0
-	add_child(layer)
-	var effect := ColorRect.new()
-	effect.name = "ClarityAndSharpness"
-	effect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	effect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var material := ShaderMaterial.new()
-	material.shader = preload("res://assets/classroom_finish.gdshader")
-	effect.material = material
-	layer.add_child(effect)
+func _build_visual_finish() -> void: RoomSetup.build_visual_finish(self)
 
 func _refresh_bars() -> void:
 	_set_health(_player_hp_ui, player_hp, hero_max_hp(), false)
@@ -1807,39 +1738,7 @@ func end_prep_turn() -> void:
 	_begin_round()
 
 func _pick_smart_threat_slot(empty_slots: Array, card_data: Dictionary) -> Node3D:
-	var elem: String = card_data.get("element", "")
-	if encounter_kind == "battle" and randf() < 0.5: return empty_slots.pick_random()
-	var best_slot: Node3D = null
-	var best_score := -999.0
-
-	for s in empty_slots:
-		if encounter_kind in ["elite", "boss"]:
-			var tactical := score_threat(card_data, s)
-			if tactical > best_score:
-				best_score = tactical
-				best_slot = s
-			continue
-		var idx: int = _threat_slots().find(s)
-		var score := 0.0
-		var opp = _get_card_in_slot(_response_slots()[idx])
-		if opp and opp.is_alive():
-			var opp_elem: String = opp.card_data.get("element", "")
-			var mult: float = TYPE_CHART.get(elem, {}).get(opp_elem, 1.0)
-			if mult > 1.0:
-				score += 3.0 # Regular encounters use only a mild matchup preference.
-			elif mult == 1.0:
-				score += 2.0
-			else:
-				score += 1.0
-		else:
-			score += 2.0 # Open lane
-		# Slight organic variance
-		score += randf() * 3.0
-		if score > best_score:
-			best_score = score
-			best_slot = s
-
-	return best_slot if best_slot else empty_slots.pick_random()
+	return DisasterAI._pick_smart_threat_slot(self, empty_slots, card_data)
 
 # ------------------------------------------------------------------- enemy
 func _present_enemy_card(definition: Dictionary, target := Vector3.ZERO) -> bool:
@@ -2091,122 +1990,20 @@ func _on_enemy_card_played(card: Node) -> void:
 	if card.card_data.get("effect", "") == "move_ally": relocate_enemy_ally(card)
 
 func choose_base_threat(candidates: Array, slots: Array) -> Dictionary:
-	if encounter_kind == "battle": return candidates.pick_random()
-	var best: Dictionary = candidates[0]
-	var value := -INF
-	for definition in candidates:
-		for slot in slots:
-			var score := score_threat(definition, slot)
-			if score > value:
-				value = score
-				best = definition
-	return best
+	return DisasterAI.choose_base_threat(self, candidates, slots)
 
 func score_threat(definition: Dictionary, slot: Node3D, layout: Dictionary = {}) -> float:
-	var lane := _threat_slots().find(slot)
-	var opponent = _get_card_in_slot(_response_slots()[lane])
-	var element: String = definition.get("element", "")
-	var attack := maxi(0, int(definition.get("attack", 0)) + int(definition.get("strength", 0)) + buff_value(false, "strength"))
-	var health := maxi(1, int(definition.get("health", 1)) + buff_value(false, "health"))
-	if definition.has("evaluated_attack"): attack = int(definition.evaluated_attack)
-	if definition.has("evaluated_health"): health = int(definition.evaluated_health)
-	var slow: bool = definition_has_modifier(definition, "sluggish") or buff_value(false, "sluggish") > 0
-	var pierce: bool = definition_has_modifier(definition, "piercing") or buff_value(false, "piercing") > 0
-	var score := health * 0.45 + attack * (0.8 if slow else 1.3)
-	var condition_target: Variant = opponent
-	var condition_source: Variant = definition.get("evaluated_statuses", {"strength":int(definition.get("strength", 0))})
-	if condition_met(definition.get("condition", {}), condition_source, condition_target): attack += int(definition.condition.get("bonus", 0))
-	if opponent and status_stacks(opponent, "any") >= 3: attack += int(definition.get("status_bonus", 0))
-	var strikes := 2 if condition_met(definition.get("condition", {}), condition_source, condition_target) and int(definition.condition.get("strikes", 1)) > 1 else 1
-	var can_strike := true
-	var hero_damage := attack + (2 if definition_has_modifier(definition, "fierce") else 0)
-	if opponent and opponent.is_alive():
-		var mult: float = TYPE_CHART.get(element, {}).get(opponent.card_data.element, 1.0)
-		var dealt: int = opponent.adjusted_damage(maxi(1, int(attack * mult)), pierce)
-		var incoming := maxi(1, int(opponent.effective_attack() * float(TYPE_CHART.get(opponent.card_data.element, {}).get(element, 1.0))))
-		if definition_has_modifier(definition, "armored"): incoming = maxi(1, incoming - int(definition.get("armor_value", 1)))
-		can_strike = not player_first or incoming < health
-		score += minf(dealt, opponent.card_data.health) * (1.7 if can_strike else 0.2)
-		if dealt >= opponent.card_data.health and can_strike: score += 8
-		if not can_strike: score -= 12 # A dead blocker cannot counterattack.
-		else: score += 3
-		if enemy_hp <= opponent.effective_attack() + 2: score += 15 # Cover potentially lethal lanes.
-		for status in definition.get("on_hit", {}): score += int(definition.on_hit[status]) * 0.5
-	else:
-		score += attack * 1.6
-		if hero_damage * strikes >= player_hp: score += 50
-	if pierce and can_strike and (opponent == null or not opponent.has_modifier("armored")):
-		score += attack * 1.2
-		if hero_damage * strikes >= player_hp: score += 70
-	for neighbor in [lane - 1, lane + 1]:
-		if neighbor < 0 or neighbor > 3: continue
-		var neighbor_slot: Node3D = _threat_slots()[neighbor]
-		var ally = _get_card_in_slot(neighbor_slot)
-		var adjacent: Dictionary = layout.get(neighbor_slot, {}) if not layout.is_empty() else (ally.card_data if ally else {})
-		if not adjacent.is_empty() and adjacent.element == element: score += 3 + buff_value(false, "synergy")
-	if strikes > 1 and can_strike: score += attack * 2.0
-	if int(definition.get("on_play_draw", 0)) > 0: score += 2 * int(definition.on_play_draw)
-	if definition.get("effect", "") == "draw": score += 3
-	if definition.get("effect", "") in ["heal_all", "rally_all"]: score += 2
-	return score
+	return DisasterAI.score_threat(self, definition, slot, layout)
 
 func definition_has_modifier(definition: Dictionary, modifier: String) -> bool:
 	return BattleEngine.definition_has_modifier(definition, modifier)
 
-func live_ai_definition(card: Node) -> Dictionary:
-	var data: Dictionary = card.card_data.duplicate(true)
-	data.evaluated_attack = card.effective_attack()
-	data.evaluated_health = int(card.card_data.health)
-	data.evaluated_statuses = card.statuses.duplicate()
-	data.modifiers = card.modifiers.duplicate()
-	return data
+func live_ai_definition(card: Node) -> Dictionary: return DisasterAI.live_ai_definition(self, card)
 
-func board_score(layout: Dictionary) -> float:
-	var value := 0.0
-	for slot in _threat_slots():
-		var definition: Dictionary = layout.get(slot, {})
-		if not definition.is_empty(): value += score_threat(definition, slot, layout)
-		else:
-			var response = _get_card_in_slot(_response_slots()[_threat_slots().find(slot)])
-			if response and response.is_alive() and response.can_attack(turn):
-				var damage: int = response.effective_attack() + _synergy_bonus(response)
-				value -= damage * (5.0 if enemy_hp <= damage else 1.8)
-	return value
+func board_score(layout: Dictionary) -> float: return DisasterAI.board_score(self, layout)
 
 func best_evolution_plan(active: Array, candidates: Array) -> Dictionary:
-	var best: Dictionary = {}
-	var best_gain := 1.0
-	var before: Dictionary = {}
-	for card in active: before[card.current_slot] = live_ai_definition(card)
-	var baseline := board_score(before)
-	var opposition := _response_slots().filter(func(slot): return _get_card_in_slot(slot) != null).size()
-	for definition in candidates:
-		var cost := int(definition.cost)
-		if cost < 1 or cost > active.size(): continue
-		for mask in range(1, 1 << active.size()):
-			var sacrifices: Array = []
-			for i in active.size():
-				if mask & (1 << i): sacrifices.append(active[i])
-			if sacrifices.size() != cost: continue
-			if sacrifices.any(func(card): return not can_sacrifice(card)): continue
-			for target in sacrifices:
-				var after: Dictionary = before.duplicate(true)
-				for sacrificed in sacrifices: after.erase(sacrificed.current_slot)
-				after[target.current_slot] = definition
-				var gain := board_score(after) - baseline
-				if cost >= 3: gain += 3.0
-				for sacrificed in sacrifices:
-					if sacrificed.card_data.get("on_sacrifice", "") == "draw" and not enemy_deck.is_empty(): gain += 2.0
-					if sacrificed.card_data.get("on_sacrifice", "") == "burn": gain += 1.0
-				# Board presence buys blockers, future sacrifices and formation bonuses.
-				# Charge more for losing a numerical advantage, unless a lethal attack wins now.
-				var lost := cost - 1
-				gain -= lost * (5.0 if active.size() > opposition else 2.0)
-				if active.size() > opposition and after.size() <= opposition and lost > 0: gain -= 6
-				if gain > best_gain:
-					best_gain = gain
-					best = {"card":definition, "slot":target.current_slot, "sacrifices":sacrifices, "gain":gain}
-	return best
+	return DisasterAI.best_evolution_plan(self, active, candidates)
 
 func relocate_enemy_ally(source: Node) -> void:
 	if encounter_kind == "versus" and disaster_is_human:

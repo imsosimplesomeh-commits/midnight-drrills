@@ -11,13 +11,14 @@ const CardRules = preload("res://scripts/run_card_rules.gd")
 const Routes = preload("res://scripts/run_routes.gd")
 const RunDebug = preload("res://scripts/run_debug.gd")
 const Shop = preload("res://scripts/run_shop.gd")
+const Workshop = preload("res://scripts/run_workshop.gd")
+const Events = preload("res://scripts/run_events.gd")
+const Buffs = preload("res://scripts/run_buffs.gd")
 ## Header, gauges, modal frame, idle hint, boss intent and board prompt, placed in the editor.
 const ShellScene = preload("res://scenes/ui/ui_shell.tscn")
 ## Screen layouts that go inside the modal. Edit them in the editor.
 const TitleScene = preload("res://scenes/ui/ui_title.tscn")
 const MenuScene = preload("res://scenes/ui/ui_menu.tscn")
-const DebugPasswordScene = preload("res://scenes/ui/ui_debug_password.tscn")
-const DebugScene = preload("res://scenes/ui/ui_debug.tscn")
 const MapScene = preload("res://scenes/ui/ui_map.tscn")
 const DeckScene = preload("res://scenes/ui/ui_deck.tscn")
 const GraveyardScene = preload("res://scenes/ui/ui_graveyard.tscn")
@@ -26,9 +27,6 @@ const ResultScene = preload("res://scenes/ui/ui_result.tscn")
 const VictoryScene = preload("res://scenes/ui/ui_victory.tscn")
 const RewardsScene = preload("res://scenes/ui/ui_rewards.tscn")
 const ContingencyRewardScene = preload("res://scenes/ui/ui_contingency_reward.tscn")
-const UpgradeScene = preload("res://scenes/ui/ui_upgrade.tscn")
-const UpgradePreviewScene = preload("res://scenes/ui/ui_upgrade_preview.tscn")
-const EventScene = preload("res://scenes/ui/ui_event.tscn")
 const CharactersScene = preload("res://scenes/ui/ui_characters.tscn")
 const CharacterPreviewScene = preload("res://scenes/ui/ui_character_preview.tscn")
 const BattleLogScene = preload("res://scenes/ui/ui_battle_log.tscn")
@@ -39,8 +37,6 @@ const ChooseCardsScene = preload("res://scenes/ui/ui_choose_cards.tscn")
 const DisasterPanelScene = preload("res://scenes/ui/ui_disaster_panel.tscn")
 const PrivacyScreenScene = preload("res://scenes/ui/ui_privacy_screen.tscn")
 const VersusDecks = preload("res://scripts/versus_decks.gd")
-const BuffChoicesScene = preload("res://scenes/ui/ui_buff_choices.tscn")
-const FloorBuffsScene = preload("res://scenes/ui/ui_floor_buffs.tscn")
 ## Pieces that many screens reuse.
 const ChoiceTileScene = preload("res://scenes/ui/ui_choice_tile.tscn")
 const CardTileScene = preload("res://scenes/ui/ui_card_tile.tscn")
@@ -2035,27 +2031,9 @@ func reverse_sort(workshop: bool) -> void:
 		var order := content.get_node_or_null("SortRow/OrderButton") as Button
 		if order: order.text = "Descending ↓" if deck_descending else "Ascending ↑"
 
-func show_upgrade() -> void:
-	reset_panel("THE WORKSHOP", "Each card can upgrade twice.", "upgrade")
-	# The layout lives in ui_upgrade.tscn; the card tiles are made here.
-	unpack_screen(UpgradeScene)
-	setup_sort_controls(content.get_node("SortRow"), true)
-	var scroll: ScrollContainer = content.get_node("Cards")
-	var grid: GridContainer = scroll.get_node("Grid")
-	fit_card_grid(grid, scroll)
-	for i in sorted_indices(collection, upgrade_sort, upgrade_descending):
-		var card := collection[i]
-		_card_tile(card, grid, show_upgrade_preview.bind(i) if can_upgrade(card) else Callable(), "Preview upgrade")
-		if not can_upgrade(card):
-			grid.get_child(grid.get_child_count() - 1).tooltip_text = "This card has reached its two-upgrade limit."
-			grid.get_child(grid.get_child_count() - 1).get_child(0).add_child(label("Fully upgraded", 14, UI.GOLD))
-	hook_button(content.get_node("LeaveButton"), finish_room)
+func show_upgrade() -> void: Workshop.show_upgrade(self)
 
-func upgrade(index: int) -> void:
-	if index < 0 or index >= collection.size() or not can_upgrade(collection[index]): return
-	collection[index] = upgraded_definition(collection[index])
-	Sfx.play("upgrade_confirmed")
-	finish_room()
+func upgrade(index: int) -> void: Workshop.upgrade(self, index)
 
 func upgrade_level(card: Dictionary) -> int:
 	return CardRules.upgrade_level(card)
@@ -2063,78 +2041,9 @@ func upgrade_level(card: Dictionary) -> int:
 func can_upgrade(card: Dictionary) -> bool:
 	return CardRules.can_upgrade(card, MAX_UPGRADES)
 
-func upgraded_definition(card: Dictionary) -> Dictionary:
-	var result: Dictionary = card.duplicate(true)
-	if not can_upgrade(card): return result
-	var tier := upgrade_level(card) + 1
-	result.upgrades = tier
-	if result.get("utility", false):
-		if tier == 1 and int(result.cost) > 0: result.cost = int(result.cost) - 1
-		elif result.get("effect", "") in ["move", "tutor", "scout", "recover"]:
-			if tier == 2: result.refund_energy = int(result.get("refund_energy", 0)) + 1
-		else: result.utility_power = int(result.get("utility_power", 0)) + 1
-	else:
-		match str(result.get("element", "")):
-			"evac":
-				if tier == 1:
-					result.attack = int(result.attack) + 1
-					if int(result.get("on_play_draw", 0)) > 0:
-						result.on_play_draw = int(result.on_play_draw) + 1
-				else:
-					result.health = int(result.health) + 1
-					result.cost = maxi(0, int(result.cost) - 1)
-					if int(result.get("on_play_draw", 0)) == 0: result.on_play_draw = 1
-			"douse":
-				if tier == 1:
-					result.attack = int(result.attack) + 1
-				var has_burn: bool = int(result.get("on_hit", {}).get("burn", 0)) > 0
-				if (tier == 1 and has_burn) or (tier == 2 and not has_burn):
-					var hits: Dictionary = result.get("on_hit", {}).duplicate(true)
-					hits.burn = int(hits.get("burn", 0)) + 1
-					result.on_hit = hits
-				if tier == 2:
-					result.health = int(result.health) + 1
-					result.leech = int(result.get("leech", 0)) + 1
-			"clearance":
-				if tier == 1:
-					result.attack = int(result.attack) + 1
-				var has_poison: bool = int(result.get("on_hit", {}).get("poison", 0)) > 0
-				if (tier == 1 and has_poison) or (tier == 2 and not has_poison):
-					var hits: Dictionary = result.get("on_hit", {}).duplicate(true)
-					hits.poison = int(hits.get("poison", 0)) + 1
-					result.on_hit = hits
-				if tier == 2:
-					result.health = int(result.health) + 1
-					result.status_bonus = int(result.get("status_bonus", 0)) + 2
-			"brace":
-				if tier == 1:
-					result.health = int(result.health) + 2
-				var armored: bool = game.definition_has_modifier(result, "armored")
-				if (tier == 1 and armored) or (tier == 2 and not armored):
-					result.armor_value = int(result.get("armor_value", 1 if game.definition_has_modifier(result, "armored") else 0)) + 1
-					var traits: Array = result.get("modifiers", []).duplicate()
-					if result.get("modifier", "") != "armored" and "armored" not in traits: traits.append("armored")
-					result.modifiers = traits
-				if tier == 2:
-					result.health = int(result.health) + 1
-					result.thorns = int(result.get("thorns", 0)) + 1
-			_:
-				result.attack = int(result.attack) + 1
-				result.health = int(result.health) + 1
-	result.name = str(result.name) + "+"
-	return result
+func upgraded_definition(card: Dictionary) -> Dictionary: return Workshop.upgraded_definition(self, card)
 
-func show_upgrade_preview(index: int) -> void:
-	if not can_upgrade(collection[index]): return
-	reset_panel("UPGRADE PREVIEW", "", "upgrade_preview")
-	# The layout lives in ui_upgrade_preview.tscn; the two card tiles go on each side of the arrow.
-	unpack_screen(UpgradePreviewScene)
-	var row: Control = content.get_node("Row")
-	_card_tile(collection[index], row)
-	row.move_child(row.get_child(row.get_child_count() - 1), 0)
-	_card_tile(upgraded_definition(collection[index]), row)
-	hook_button(content.get_node("ConfirmButton"), upgrade.bind(index))
-	hook_button(content.get_node("BackButton"), show_upgrade)
+func show_upgrade_preview(index: int) -> void: Workshop.show_upgrade_preview(self, index)
 
 func show_shop() -> void: Shop.show_shop(self)
 
@@ -2166,96 +2075,9 @@ func catalog_card(id: String) -> Dictionary:
 		if card.id == id: return card.duplicate(true)
 	return {}
 
-func show_event() -> void:
-	var key := "%d:%d" % [floor_number, current]
-	if event_key != key:
-		event_key = key
-		event_type = str(rooms[current].get("event", "locked")) if current >= 0 and current < rooms.size() else "locked"
-		if event_type == "": event_type = "locked"
-		event_resolved = false
-		event_cards.clear()
-		if event_type == "locked": event_cards = offers(1)
-		elif event_type == "science":
-			var burn := catalog_card("steam_team")
-			burn.name = "Experimental Steam Team"
-			burn.on_hit.burn = int(burn.on_hit.burn) + 2
-			var poison := catalog_card("hazmat_team")
-			poison.name = "Experimental Hazmat Team"
-			poison.on_hit.poison = int(poison.on_hit.poison) + 1
-			event_cards.assign([burn, poison])
-	var group_name: String
-	match event_type:
-		"radio":
-			reset_panel("THE EMERGENCY RADIO", "Kit: Hazard Forecast, Search and Rescue.", "event")
-			group_name = "Radio"
-		"rooftop":
-			reset_panel("ROOFTOP DRILLS", "Energy loss lasts the rest of the run.", "event")
-			group_name = "Rooftop"
-		"science":
-			reset_panel("THE SCIENCE LAB", "", "event")
-			group_name = "Science"
-		"infirmary":
-			reset_panel("A VOLUNTEER'S OFFER", "Paperwork: spend 1 energy to discard it.", "event")
-			group_name = "Infirmary"
-		"lost_found":
-			reset_panel("LOST AND FOUND", "", "event")
-			group_name = "LostFound"
-		_:
-			reset_panel("A LOCKED CLASSROOM", "", "event")
-			group_name = "Locked"
-	# The layout lives in ui_event.tscn: one group of buttons per event. Only this event's group stays.
-	var box := centered_screen(EventScene)
-	for other in box.get_children():
-		if other is VBoxContainer and other.name != group_name: other.free()
-	var group: Control = box.get_node(group_name)
-	match group_name:
-		"Radio":
-			hook_button(group.get_node("BuyButton"), resolve_event.bind("radio_buy")).disabled = coins < 20
-		"Rooftop":
-			hook_button(group.get_node("TrainButton"), resolve_event.bind("training"))
-		"Science":
-			var row: Control = group.get_node("Stock")
-			for i in range(event_cards.size()): _card_tile(event_cards[i], row, resolve_event.bind("science_%d" % i) if game.player_hp > 3 else Callable(), "Take card · -3 HP")
-		"Infirmary":
-			var treatment: Button = group.get_node("TreatmentButton")
-			treatment.text = "Full treatment · +%d HP · add Paperwork" % healing_gain(8)
-			hook_button(treatment, resolve_event.bind("treatment")).disabled = game.player_hp >= game.hero_max_hp()
-			var short_break: Button = group.get_node("RestButton")
-			short_break.text = "Short break · +%d HP · free" % healing_gain(3)
-			hook_button(short_break, resolve_event.bind("rest"))
-		"LostFound":
-			hook_button(group.get_node("TradeButton"), show_remove_cards.bind("event")).disabled = collection.size() <= 5
-		"Locked":
-			hook_button(group.get_node("RiskButton"), event_risk).disabled = game.player_hp <= 3
-	if group.has_node("SafeButton"): hook_button(group.get_node("SafeButton"), resolve_event.bind("safe"))
+func show_event() -> void: Events.show_event(self)
 
-func resolve_event(choice: String) -> void:
-	if screen != "event" or event_resolved: return
-	if choice in ["risk", "science_0", "science_1"] and game.player_hp <= 3: return
-	if choice == "radio_buy" and coins < 20: return
-	event_resolved = true
-	match choice:
-		"risk":
-			game.player_hp -= 3
-			coins += 30
-			Sfx.play("supplies_gained")
-			add_collection_card(event_cards[0].duplicate(true))
-		"radio_buy":
-			coins -= 20
-			add_collection_card(catalog_card("scout"))
-			add_collection_card(catalog_card("tutor"))
-		"training": game.add_global_buff(true, "drill_tactics", true)
-		"science_0", "science_1":
-			game.player_hp -= 3
-			add_collection_card(event_cards[int(choice.right(1))].duplicate(true))
-		"treatment":
-			game.player_hp = mini(game.hero_max_hp(), game.player_hp + 8)
-			add_collection_card({"id":"paperwork", "name":"Paperwork", "type":"response", "element":"clearance", "cost":1, "attack":0, "health":1, "utility":true, "effect":"delay"})
-		"rest": game.player_hp = mini(game.hero_max_hp(), game.player_hp + 3)
-		_:
-			coins += 10
-			Sfx.play("supplies_gained")
-	finish_room()
+func resolve_event(choice: String) -> void: Events.resolve_event(self, choice)
 
 func event_risk() -> void: resolve_event("risk")
 
@@ -2311,124 +2133,13 @@ func cancel_debug_password() -> void:
 	if debug_from_menu: show_menu()
 	else: close_modal()
 
-func show_debug() -> void:
-	if screen == "debug":
-		close_modal()
-		return
-	if not debug_available() or (modal.visible and screen != "menu"): return
-	debug_from_menu = screen == "menu"
-	reset_panel("DEBUG ACCESS", "", "debug_password")
-	# The layout lives in ui_debug_password.tscn.
-	unpack_screen(DebugPasswordScene)
-	var password: LineEdit = content.get_node("DebugPassword")
-	var error: Label = content.get_node("PasswordError")
-	var submit := func():
-		if password.text != "*****":
-			error.text = "Incorrect password."
-			return
-		password.text = ""
-		if not debug_available():
-			cancel_debug_password()
-			return
-		_open_debug("*****")
-	password.text_submitted.connect(func(_text): submit.call())
-	hook_button(content.get_node("UnlockButton"), submit)
-	hook_button(content.get_node("CancelButton"), cancel_debug_password)
-	password.grab_focus()
+func show_debug() -> void: RunDebug.show_debug(self)
 
-func _open_debug(password: String) -> void:
-	if password != "*****" or screen != "debug_password" or not debug_available(): return
-	reset_panel("DEBUG VALUES", "", "debug")
-	# The layout lives in ui_debug.tscn; each SpinBox there is named after its value.
-	unpack_screen(DebugScene)
-	var fields := {}
-	for spec in [
-		["player_hp", "Player HP", 1, game.hero_max_hp()], ["enemy_hp", "Enemy HP", 1, game.enemy_max_hp],
-		["energy_cap", "Energy cap", 1, 30], ["preparedness", "Energy", 0, 30],
-		["tension_cap", "Tension cap", 1, 30], ["tension", "Tension", 0, 30],
-		["coins", "Supplies", 0, 9999], ["plans", "Plans", 0, 2],
-	]:
-		var field: SpinBox = content.get_node("Values/" + spec[0])
-		field.min_value = spec[2]
-		field.max_value = spec[3]
-		field.value = coins if spec[0] == "coins" else (game.plans.tokens if spec[0] == "plans" else game.get(spec[0]))
-		fields[spec[0]] = field
-	hook_button(content.get_node("ApplyButton"), func():
-		for key in fields:
-			if key == "coins": coins = int(fields[key].value)
-			elif key == "plans": game.plans.tokens = int(fields[key].value)
-			else: game.set(key, int(fields[key].value))
-		game.preparedness = mini(game.preparedness, game.energy_cap)
-		game.tension = mini(game.tension, game.tension_cap)
-		game._refresh_bars()
-		game.log_event("Debug values applied.")
-		close_modal()
-		persistence.checkpoint()
-	)
-	_debug_card_controls()
-	var boss_row := HBoxContainer.new()
-	boss_row.name = "BossSelection"
-	content.add_child(boss_row)
-	var bosses := OptionButton.new()
-	bosses.name = "BossPicker"
-	for title in ["Floor 1 · Janitor", "Floor 2 · Janitor", "Floor 3 · Midnight Warden"]:
-		bosses.add_item(title)
-	bosses.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	boss_row.add_child(bosses)
-	button("Enter boss", func(): debug_enter_boss(bosses.selected + 1), boss_row)
-	hook_button(content.get_node("CancelButton"), close_modal)
+func _open_debug(password: String) -> void: RunDebug.open_debug(self, password)
 
-func debug_enter_boss(boss_floor: int) -> bool:
-	if screen != "debug" or boss_floor not in [1, 2, 3]: return false
-	# Reuse the run collection and normal encounter initializer; never bypass the coin or Warden setup.
-	if collection.is_empty(): new_run()
-	floor_number = boss_floor
-	generate_map()
-	current = int(rooms.back().id)
-	encounter = "boss"
-	intel_revealed = false
-	battle_active = true
-	run_active = true
-	game.player_hp = game.hero_max_hp()
-	action_cancel = Callable()
-	modal.hide()
-	screen = ""
-	get_tree().paused = false
-	game.start_encounter(collection, encounter, floor_number, rng.randi_range(0, 3))
-	return true
+func debug_enter_boss(boss_floor: int) -> bool: return RunDebug.debug_enter_boss(self, boss_floor)
 
-func _debug_card_controls() -> void:
-	var status_row: Control = content.get_node("StatusRow")
-	var targets := game.get_tree().get_nodes_in_group("cards").filter(func(card):
-		return card.is_alive() and not card.preview_only and (card.in_hand or is_instance_valid(card.current_slot)))
-	var target: OptionButton = status_row.get_node("DebugCard")
-	for i in targets.size():
-		var card: Node = targets[i]
-		var location := "HAND" if card.in_hand else str(card.card_data.get("type", "")).to_upper()
-		target.add_item("%d / %s / %s" % [i + 1, location, card.card_data.name])
-	if targets.is_empty(): target.add_item("No cards")
-	target.disabled = targets.is_empty()
-	var fields := {}
-	for spec in [["cost", "Cost"], ["attack", "ATK"], ["health", "HP"]]:
-		var field: SpinBox = status_row.get_node("Stats/Debug" + str(spec[1]))
-		fields[spec[0]] = field
-		field.value_changed.connect(_debug_set_card_stat.bind(targets, target, spec[0]))
-	target.item_selected.connect(func(_index): _debug_load_card_stats(targets, target, fields))
-	_debug_load_card_stats(targets, target, fields)
-	var status: OptionButton = status_row.get_node("Status")
-	for key in ["strength", "bleed", "burn", "poison", "barrier", "healing_reduced"]: status.add_item(key)
-	var amount: SpinBox = status_row.get_node("Amount")
-	hook_button(status_row.get_node("SetStatusButton"), func():
-		var card := _debug_selected_card(targets, target)
-		if card == null: return
-		var key := status.get_item_text(status.selected)
-		if amount.value == 0: card.statuses.erase(key)
-		else: card.statuses[key] = int(amount.value)
-		card._refresh_face()
-		game.vfx.sync_status(card)
-		game.log_event("Debug status: %s · %s %d" % [card.card_data.name, key, int(amount.value)])
-		persistence.checkpoint()
-	).disabled = targets.is_empty()
+func _debug_card_controls() -> void: RunDebug.debug_card_controls(self)
 
 func _debug_selected_card(targets: Array, picker: OptionButton) -> Node:
 	return RunDebug._debug_selected_card(targets, picker.selected)
@@ -2581,89 +2292,15 @@ func show_intel() -> void:
 	for card in game.enemy_hand: _card_tile(card, row)
 	hook_button(content.get_node("ReturnButton"), close_modal)
 
-func show_buff_choices(restore_offers: bool = false) -> void:
-	Sfx.play("adaptation_offered")
-	if not restore_offers: buff_choices.clear()
-	var pool: Array = Rules.BUFFS.duplicate(true)
-	if not restore_offers:
-		for i in range(3):
-			var index := rng.randi_range(0, pool.size() - 1)
-			buff_choices.append(pool.pop_at(index))
-	reset_panel("ROUND %d · BATTLE ADAPTATION" % game.turn,
-		"Choose one adaptation · lasts this battle", "buff")
-	# The layout lives in ui_buff_choices.tscn; the buff tiles are made here.
-	var box := centered_screen(BuffChoicesScene)
-	box.custom_minimum_size.x = maxf(300, modal.size.x - 100)
-	var heading: Label = box.get_child(0)
-	heading.add_theme_font_size_override("font_size", 32)
-	var row: Control = box.get_node("Row")
-	var symbols := {
-		"strength": "strength", "health": "regenerating", "energy": "refund_energy", "burn": "burn",
-		"poison": "poison", "bleed": "bleed", "draw": "draw", "glass": "strength",
-		"overclock": "refund_energy", "blood_pact": "bleed", "patient": "regenerating",
-		"toxic_ward": "poison", "formation": "rally_all", "spines": "thorns", "precision": "piercing"
-	}
-	for buff in buff_choices:
-		var pick := choice_tile(buff.name, buff.description, select_buff.bind(buff.id), row)
-		pick.clip_text = false
-		pick.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		pick.icon = UI.icon(symbols.get(buff.id, "strength"), UI.GOLD)
-		pick.expand_icon = true
-		pick.add_theme_constant_override("icon_max_width", 28)
-		pick.custom_minimum_size.y = 76
-		pick.add_theme_font_size_override("font_size", 24)
-		var tile: Control = pick.get_parent().get_parent()
-		tile.custom_minimum_size = Vector2(0, 290)
-		var details: Label = tile.get_node("Box/Details")
-		details.add_theme_font_size_override("font_size", 22)
-	box.get_node("Summary").text = "CURRENT ADAPTATIONS\n" + buff_summary(game.player_buffs)
-	box.get_node("Summary").add_theme_font_size_override("font_size", 22)
-	# Skip the focus if the screen changed before this deferred call ran.
-	var first_pick: Button = row.get_child(0).get_node("Box/PickButton")
-	var focus_first := func(button) -> void:
-		if is_instance_valid(button) and button.is_inside_tree():
-			button.grab_focus()
-	focus_first.call_deferred(first_pick)
+func show_buff_choices(restore_offers: bool = false) -> void: Buffs.show_buff_choices(self, restore_offers)
 
-func select_buff(id: String) -> void:
-	if screen != "buff" or not buff_choices.any(func(buff): return buff.id == id): return
-	game.add_global_buff(true, id)
-	Sfx.play("adaptation_selected")
-	close_modal()
-	game.continue_round()
+func select_buff(id: String) -> void: Buffs.select_buff(self, id)
 
-func show_floor_buffs(restore_offers: bool = false) -> void:
-	if not restore_offers: buff_choices.clear()
-	var pool: Array = Rules.RUN_BUFFS.duplicate(true)
-	if not restore_offers:
-		for i in range(3): buff_choices.append(pool.pop_at(rng.randi_range(0, pool.size() - 1)))
-	reset_panel("FLOOR %d CLEARED · PERMANENT REWARD" % floor_number,
-		"Lasts the whole run.", "floor_buff")
-	# The layout lives in ui_floor_buffs.tscn; the buff tiles are made here.
-	var box := centered_screen(FloorBuffsScene)
-	box.custom_minimum_size.x = maxf(300, modal.size.x - 100)
-	var row: Control = box.get_node("Row")
-	for buff in buff_choices:
-		var pick := choice_tile(buff.name, buff.description, select_floor_buff.bind(buff.id), row)
-		_style_reward_choice(pick, "strength")
-	hook_button(box.get_node("ReturnButton"), return_title)
+func show_floor_buffs(restore_offers: bool = false) -> void: Buffs.show_floor_buffs(self, restore_offers)
 
-func select_floor_buff(id: String) -> void:
-	if screen != "floor_buff" or not buff_choices.any(func(buff): return buff.id == id): return
-	game.add_global_buff(true, id, true)
-	Sfx.play("adaptation_selected")
-	next_floor()
+func select_floor_buff(id: String) -> void: Buffs.select_floor_buff(self, id)
 
-func buff_summary(buffs: Dictionary) -> String:
-	var names: PackedStringArray = []
-	for id in buffs:
-		var title: String = str(id).capitalize()
-		for option in Rules.BUFFS + Rules.RUN_BUFFS + Rules.CHARACTER_BUFFS:
-			if option.id == id:
-				title = option.name
-				break
-		names.append("%s ×%d" % [title, int(buffs[id])])
-	return "None" if names.is_empty() else " / ".join(names)
+func buff_summary(buffs: Dictionary) -> String: return Buffs.buff_summary(buffs)
 
 
 func _notification(what: int) -> void:
