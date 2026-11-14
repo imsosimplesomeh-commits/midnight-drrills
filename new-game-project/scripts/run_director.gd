@@ -31,6 +31,9 @@ const CharactersScene = preload("res://scenes/ui/ui_characters.tscn")
 const CharacterPreviewScene = preload("res://scenes/ui/ui_character_preview.tscn")
 const BattleLogScene = preload("res://scenes/ui/ui_battle_log.tscn")
 const PlansScene = preload("res://scenes/ui/ui_plans.tscn")
+# The Plans screen words. The LAN client (lan_board_3d.gd) shows the same screen with them.
+const PLANS_TITLE := "PREPAREDNESS · CONTINGENCIES"
+const PLANS_SUBTITLE := "Save 2 unused energy at End Turn for 1 Plan. Unlock more tactics from elite and boss wins."
 const IntelScene = preload("res://scenes/ui/ui_intel.tscn")
 const ConfirmScene = preload("res://scenes/ui/ui_confirm.tscn")
 const ChooseCardsScene = preload("res://scenes/ui/ui_choose_cards.tscn")
@@ -172,6 +175,7 @@ func _ready() -> void:
 	else:
 		game.clear_battle()
 		show_title()
+		preload("res://scripts/lan_autostart.gd").run(self)  # Debug only, needs "-- host" or "-- join <ip>"
 
 func show_title() -> void:
 	Sfx.map_screen(false)
@@ -199,35 +203,29 @@ func show_title() -> void:
 		start_button.pressed.connect(show_characters)
 		start_button.grab_focus()
 	title_screen.get_node("%QuitButton").pressed.connect(quit_game)
-	title_screen.get_node("%VersusButton").pressed.connect(start_versus_match)
-	if preload("res://scripts/versus_match.gd").LAN_ENABLED: add_lan_buttons(title_screen)
-
-## LAN Part E: Host LAN and Join LAN under Versus, with the same look as the other menu items.
-## Lobby step: one LAN Versus button instead. It opens the LAN lobby hub (lan_title.show_lobby).
-func add_lan_buttons(title_screen: Control) -> void:
-	if not is_instance_valid(lan_title):
-		lan_title = preload("res://scripts/lan_title.gd").new()
-		lan_title.name = "LanTitle"
-		add_child(lan_title)
-		lan_title.setup(self)
 	var versus_button: Button = title_screen.get_node("%VersusButton")
-	# Called twice on one title (show_title, then a test): keep one button.
-	if versus_button.get_parent().has_node("LanVersusButton"):
-		return
-	var lan_button := _lan_menu_button(title_screen, versus_button, "LanVersusButton", "LAN Versus")
-	lan_button.pressed.connect(lan_title.show_lobby)
+	if preload("res://scripts/versus_match.gd").LAN_ENABLED:
+		# The node keeps its name. With LAN on it opens the Multiplayer panel instead of a match.
+		versus_button.text = "Multiplayer"
+		versus_button.pressed.connect(show_multiplayer)
+	else:
+		versus_button.pressed.connect(start_versus_match)
 
-## One title menu item, copied from the Versus button's size and font, placed under after.
-func _lan_menu_button(title_screen: Control, after: Button, button_name: String, text: String) -> Button:
-	var b := Button.new()
-	b.name = button_name
-	b.text = text
-	b.custom_minimum_size = after.custom_minimum_size
-	b.mouse_default_cursor_shape = after.mouse_default_cursor_shape
-	b.add_theme_font_size_override("font_size", after.get_theme_font_size("font_size"))
-	after.add_sibling(b)
-	title_screen.style_menu_button(b)
-	return b
+## Title: the Multiplayer panel (Versus, LAN Versus, Back). See multiplayer_menu.gd.
+func show_multiplayer() -> void:
+	preload("res://scripts/multiplayer_menu.gd").show_panel(self)
+
+## The LAN lobby. The lan_title node is made on the first press, not at the title.
+func open_lan_lobby() -> void:
+	ensure_lan_title()
+	lan_title.show_lobby()
+
+func ensure_lan_title() -> void:
+	if is_instance_valid(lan_title): return
+	lan_title = preload("res://scripts/lan_title.gd").new()
+	lan_title.name = "LanTitle"
+	add_child(lan_title)
+	lan_title.setup(self)
 
 ## Starts a Versus match. The match node is made once and never touches the save file.
 func start_versus_match() -> void:
@@ -1838,24 +1836,31 @@ func show_battle_log() -> void:
 
 func show_plans() -> void:
 	if not battle_active or _dragging() or not game.board_input.action.is_empty(): return
+	# LAN: the host is the Disaster, so P must not open the Preparedness plans. The client has its own screen.
+	if game.seat_prep != "local": return
 	if screen == "plans":
 		close_modal()
 		return
 	if screen in DECISIONS or saved_content != null: return
-	reset_panel("PREPAREDNESS · CONTINGENCIES", "Save 2 unused energy at End Turn for 1 Plan. Unlock more tactics from elite and boss wins.", "plans")
+	reset_panel(PLANS_TITLE, PLANS_SUBTITLE, "plans")
 	# The layout lives in ui_plans.tscn; the tactic tiles are made here.
 	unpack_screen(PlansScene)
 	content.get_node("Status").text = "PLANS %d / 2" % game.plans.tokens
 	var list: Control = content.get_node("Scroll/List")
 	for id in game.plans.unlocked:
 		var tactic: Dictionary = game.plans.definition(id)
-		var pick := choice_tile(tactic.name + " · %d Plan%s" % [tactic.cost, "s" if int(tactic.cost) > 1 else ""], tactic.description, begin_tactic.bind(id), list)
+		var pick := choice_tile(plans_tile_title(tactic.name, int(tactic.cost)), tactic.description,
+			begin_tactic.bind(id), list)
 		pick.disabled = not tactic_available(id)
 		pick.get_parent().get_parent().custom_minimum_size.y = 125
 	var armed: Label = content.get_node("Armed")
 	if game.plans.armed.is_empty(): armed.free()
 	else: armed.text = "ARMED: " + str(game.plans.definition(game.plans.armed.kind).name)
 	hook_button(content.get_node("ReturnButton"), close_modal)
+
+## A Plans tile title: "Brace · 1 Plan". The LAN client uses it too.
+static func plans_tile_title(tactic_name: String, cost: int) -> String:
+	return tactic_name + " · %d Plan%s" % [cost, "s" if cost > 1 else ""]
 
 func tactic_available(id: String) -> bool:
 	var tactic: Dictionary = game.plans.definition(id)

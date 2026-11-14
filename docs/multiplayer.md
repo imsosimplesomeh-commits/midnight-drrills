@@ -2,7 +2,7 @@
 
 ## Local Versus
 
-Choose Versus on the title screen to start a single Preparedness versus Disaster battle.
+Choose Multiplayer, then Versus, on the title screen to start a single Preparedness versus Disaster battle.
 With human Disaster, both players share one computer. The pass-the-laptop privacy cover names the next player;
 pass the computer, then choose "I am ready". One Versus HUD shows HP, Energy and Tension bars of one height.
 The LAN client builds the same HUD pieces as the host. A Preparedness figure stands at the player's seat;
@@ -54,7 +54,7 @@ It uses ENet over UDP port 24680 and protocol 6 (3, plus 1 for evolution picks, 
 Both peers need the same game build and Godot version; the handshake also checks the build markers.
 
 Connect both computers to the same local network or the same Radmin VPN network.
-On the title screen, choose LAN Versus. One player hosts; the other joins using the host's displayed
+On the title screen, choose Multiplayer, then LAN Versus. One player hosts; the other joins using the host's displayed
 LAN IPv4 address or Radmin address. The coin and side-choice step determines which player owns each side.
 
 On the host computer, allow the game executable through Windows Firewall for the network profile in use.
@@ -70,6 +70,13 @@ ally and drop it on an empty lane. The host still checks every step. Esc skips a
 Player 2 opens lists on request: L for the battle log, D for its own deck, G or the graveyard button for its
 own graveyard. The host answers with the asking seat's own cards only. Log lines that name the other seat's
 private cards (Preparedness hand, Plan unlocks, saved tokens, armed Plans) show public words instead.
+
+### Testing on one PC
+
+In the editor, open Debug > Customize Run Instances, turn on 2 instances and set their launch arguments.
+Instance 1: `-- host`. Instance 2: `-- join 127.0.0.1`. Press Run: the first window hosts, the second joins,
+and the host starts the match once Player 2 is connected. This only works in debug builds with LAN on;
+without these arguments the game starts normally.
 
 ### LAN limits
 
